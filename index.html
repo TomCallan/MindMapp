@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data-Driven Dynamic Mind Mapping</title>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        #canvas {
+            width: 5000px;
+            height: 5000px;
+            position: relative;
+            cursor: move;
+        }
+
+        .box {
+            position: absolute;
+            background-color: #f0f0f0;
+            border: 2px solid #999;
+            border-radius: 5px;
+            padding: 10px;
+            min-width: 100px;
+            max-width: 300px;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+            will-change: transform, opacity;
+        }
+
+        .parent-box {
+            font-weight: bold;
+            transform: scale(1.1);
+        }
+
+        .box textarea {
+            width: 100%;
+            resize: none;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: inherit;
+            color: inherit;
+        }
+
+        .question {
+            position: absolute;
+            background-color: #ddd;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .box-button {
+            width: 20px;
+            height: 20px;
+            position: absolute;
+            top: -10px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 12px;
+            background-color: #999;
+            color: white;
+        }
+
+        .drag-handle {
+            left: -10px;
+            cursor: move;
+        }
+
+        .edit-button {
+            left: 20px;
+        }
+
+        .visibility-toggle {
+            left: 50px;
+        }
+
+        .color-picker {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            padding: 5px;
+            display: none;
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas">
+        <button id="saveDataButton" style="position: fixed; top: 10px; right: 10px; z-index: 1000;">Save Data</button>
+        <input type="file" id="loadDataFile" style="display: none;">
+        <button id="loadDataButton" style="position: fixed; top: 40px; right: 10px; z-index: 1000;">Load Data</button>
+    </div>
+
+    <script>
+        // Data structure
+        const mindMap = {
+            nodes: {},
+            connections: [],
+            nextId: 1
+        };
+
+        const canvas = document.getElementById('canvas');
+        let isDragging = false;
+        let startX, startY;
+
+        canvas.addEventListener('mousedown', startDragging);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', stopDragging);
+        canvas.addEventListener('dblclick', createNode);
+
+        function startDragging(e) {
+            if (e.target.classList.contains('box-button')) return;
+            isDragging = true;
+            startX = e.clientX - canvas.offsetLeft;
+            startY = e.clientY - canvas.offsetTop;
+        }
+
+        function drag(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            const x = e.clientX - startX;
+            const y = e.clientY - startY;
+            canvas.style.left = `${x}px`;
+            canvas.style.top = `${y}px`;
+        }
+
+        function stopDragging() {
+            isDragging = false;
+        }
+
+        function saveMindMapData() {
+            const data = {
+                nodes: mindMap.nodes,
+                connections: mindMap.connections.map(conn => ({
+                    parent: conn.parent,
+                    child: conn.child
+                }))
+            };
+
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'mindmap_data.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function initializeSaving() {
+            const saveButton = document.getElementById('saveDataButton');
+            saveButton.addEventListener('click', saveMindMapData);
+        }
+
+        function loadMindMapData(data) {
+            // Clear existing mind map data
+            mindMap.nodes = {};
+            mindMap.connections = [];
+            mindMap.nextId = 1;
+
+            // Remove existing node and connection elements
+            document.querySelectorAll('.box').forEach(el => el.remove());
+            document.querySelectorAll('svg').forEach(el => el.remove());
+
+            // Load nodes
+            for (let nodeId in data.nodes) {
+                const nodeData = data.nodes[nodeId];
+                mindMap.nodes[nodeId] = nodeData;
+                renderNode(nodeData);
+                if (nodeData.id >= mindMap.nextId) {
+                    mindMap.nextId = nodeData.id + 1;
+                }
+            }
+
+            // Load connections
+            data.connections.forEach(conn => {
+                connectNodes(mindMap.nodes[conn.parent], mindMap.nodes[conn.child]);
+            });
+
+            updateConnections();
+        }
+
+        function handleFileLoad(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        loadMindMapData(data);
+                    } catch (error) {
+                        console.error("Error parsing file:", error);
+                        alert("Error loading file. Please make sure it's a valid JSON file.");
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function initializeFileLoading() {
+            const fileInput = document.getElementById('loadDataFile');
+            const loadButton = document.getElementById('loadDataButton');
+
+            fileInput.addEventListener('change', handleFileLoad);
+            loadButton.addEventListener('click', () => fileInput.click());
+        }
+
+        function initializeSaving() {
+            const saveButton = document.getElementById('saveDataButton');
+            saveButton.addEventListener('click', saveMindMapData);
+        }
+
+        function createNode(e) {
+            if (e.target !== canvas) return;
+
+            updateMindMapData(() => {
+                const id = mindMap.nextId++;
+                const node = {
+                    id: id,
+                    x: e.clientX - canvas.offsetLeft,
+                    y: e.clientY - canvas.offsetTop,
+                    text: '',
+                    backgroundColor: '#f0f0f0',
+                    borderColor: '#999',
+                    isParent: false,
+                    isVisible: true,
+                    questions: generateQuestions()
+                };
+
+                mindMap.nodes[id] = node;
+                renderNode(node);
+            });
+        }
+
+
+        function generateQuestions() {
+            const numQuestions = Math.floor(Math.random() * 4) + 1;
+            return Array.from({ length: numQuestions }, (_, i) => ({
+                text: `Question ${i + 1}?`,
+                angle: (Math.PI * 2 / numQuestions) * i
+            }));
+        }
+
+        function renderNode(node) {
+            let box = document.getElementById(`node-${node.id}`);
+            if (box) {
+                // Update existing node
+                box.style.left = `${node.x}px`;
+                box.style.top = `${node.y}px`;
+                box.style.backgroundColor = node.backgroundColor;
+                box.style.borderColor = node.borderColor;
+                box.classList.toggle('parent-box', node.isParent);
+                box.style.opacity = node.isVisible ? '1' : '0';
+                box.querySelector('textarea').value = node.text;
+            } else {
+                // Create new node
+                box = document.createElement('div');
+                box.className = 'box';
+                box.id = `node-${node.id}`;
+                box.style.left = `${node.x}px`;
+                box.style.top = `${node.y}px`;
+                box.style.backgroundColor = node.backgroundColor;
+                box.style.borderColor = node.borderColor;
+                if (node.isParent) box.classList.add('parent-box');
+                if (!node.isVisible) box.style.opacity = '0';
+
+                const textarea = document.createElement('textarea');
+                textarea.value = node.text;
+                textarea.placeholder = 'Enter text...';
+                textarea.addEventListener('input', (e) => {
+                    node.text = e.target.value;
+                    textarea.style.height = 'auto';
+                    textarea.style.height = `${textarea.scrollHeight}px`;
+                });
+
+                const dragHandle = createButton('drag-handle', '&#x2725;');
+                dragHandle.addEventListener('mousedown', (event) => {
+                    event.stopPropagation();
+                    const startX = event.clientX - node.x;
+                    const startY = event.clientY - node.y;
+
+                    function mousemove(event) {
+                        node.x = event.clientX - startX;
+                        node.y = event.clientY - startY;
+                        box.style.left = `${node.x}px`;
+                        box.style.top = `${node.y}px`;
+                        updateConnections();
+                    }
+
+                    function mouseup() {
+                        document.removeEventListener('mousemove', mousemove);
+                        document.removeEventListener('mouseup', mouseup);
+                    }
+
+                    document.addEventListener('mousemove', mousemove);
+                    document.addEventListener('mouseup', mouseup);
+                });
+
+                const editButton = createButton('edit-button', '&#x1F58C;');
+                editButton.addEventListener('click', () => toggleColorPicker(box));
+
+                const visibilityToggle = createButton('visibility-toggle', '&#x1F441;');
+                visibilityToggle.addEventListener('click', () => toggleChildrenVisibility(node));
+
+                const colorPicker = createColorPicker(node);
+
+                box.appendChild(textarea);
+                box.appendChild(dragHandle);
+                box.appendChild(editButton);
+                box.appendChild(visibilityToggle);
+                box.appendChild(colorPicker);
+                canvas.appendChild(box);
+
+                renderQuestions(node, box);
+            }
+        }
+
+        function createButton(className, innerHTML) {
+            const button = document.createElement('div');
+            button.className = `box-button ${className}`;
+            button.innerHTML = innerHTML;
+            return button;
+        }
+
+        function createColorPicker(node) {
+            const picker = document.createElement('div');
+            picker.className = 'color-picker';
+
+            const bgColorPicker = document.createElement('input');
+            bgColorPicker.type = 'color';
+            bgColorPicker.value = node.backgroundColor;
+            bgColorPicker.addEventListener('input', (e) => {
+                node.backgroundColor = e.target.value;
+                document.getElementById(`node-${node.id}`).style.backgroundColor = e.target.value;
+            });
+
+            const borderColorPicker = document.createElement('input');
+            borderColorPicker.type = 'color';
+            borderColorPicker.value = node.borderColor;
+            borderColorPicker.addEventListener('input', (e) => {
+                node.borderColor = e.target.value;
+                document.getElementById(`node-${node.id}`).style.borderColor = e.target.value;
+            });
+
+            picker.appendChild(bgColorPicker);
+            picker.appendChild(borderColorPicker);
+
+            return picker;
+        }
+
+        function toggleColorPicker(box) {
+            const picker = box.querySelector('.color-picker');
+            picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function toggleChildrenVisibility(node) {
+            const descendants = getAllDescendants(node);
+            const isHiding = descendants.length > 0 && descendants[0].isVisible;
+
+            descendants.forEach(descendant => {
+                descendant.isVisible = !isHiding;
+                updateNodeVisibility(descendant);
+            });
+
+            updateConnectionsVisibility(node, !isHiding);
+        }
+
+        function getAllDescendants(node) {
+            let descendants = [];
+            const children = getChildNodes(node);
+            children.forEach(child => {
+                descendants.push(child);
+                descendants = descendants.concat(getAllDescendants(child));
+            });
+            return descendants;
+        }
+
+        function updateNodeVisibility(node) {
+            const nodeElement = document.getElementById(`node-${node.id}`);
+            nodeElement.style.opacity = node.isVisible ? '1' : '0';
+            nodeElement.style.transform = `scale(${node.isVisible ? '1' : '0.1'})`;
+        }
+
+        function updateConnectionsVisibility(node, isVisible) {
+            mindMap.connections.forEach(conn => {
+                if (conn.parent === node.id) {
+                    conn.isVisible = isVisible;
+                    if (conn.svg) {
+                        conn.svg.style.opacity = isVisible ? '1' : '0';
+                    }
+                }
+            });
+        }
+
+        function getChildNodes(parent) {
+            return mindMap.connections
+                .filter(conn => conn.parent === parent.id)
+                .map(conn => mindMap.nodes[conn.child]);
+        }
+
+        function renderQuestions(node, box) {
+            node.questions.forEach((question, i) => {
+                const questionElement = document.createElement('div');
+                questionElement.className = 'question';
+                questionElement.textContent = question.text;
+
+                const distance = 150;
+                const x = Math.cos(question.angle) * distance;
+                const y = Math.sin(question.angle) * distance;
+
+                questionElement.style.left = `${x + 50}px`;
+                questionElement.style.top = `${y + 50}px`;
+
+                questionElement.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    const childNode = createChildNode(node, x, y);
+                    connectNodes(node, childNode);
+                    box.removeChild(questionElement);
+                    node.questions.splice(i, 1);
+                    node.isParent = true;
+                    box.classList.add('parent-box');
+                });
+
+                box.appendChild(questionElement);
+            });
+        }
+
+        function createChildNode(parentNode, offsetX, offsetY) {
+            const id = mindMap.nextId++;
+            const childNode = {
+                id: id,
+                x: parentNode.x + offsetX + 50,
+                y: parentNode.y + offsetY + 50,
+                text: '',
+                backgroundColor: '#f0f0f0',
+                borderColor: '#999',
+                isParent: false,
+                isVisible: true,
+                questions: generateQuestions()
+            };
+
+            mindMap.nodes[id] = childNode;
+            renderNode(childNode);
+            return childNode;
+        }
+
+        function connectNodes(parent, child) {
+            const existingConnection = mindMap.connections.find(
+                conn => conn.parent === parent.id && conn.child === child.id
+            );
+            if (!existingConnection) {
+                const connection = { parent: parent.id, child: child.id };
+                mindMap.connections.push(connection);
+                renderConnection(connection);
+            }
+        }
+
+        function renderConnection(connection) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.style.position = 'absolute';
+            svg.style.top = '0';
+            svg.style.left = '0';
+            svg.style.width = '100%';
+            svg.style.height = '100%';
+            svg.style.pointerEvents = 'none';
+            svg.style.zIndex = '-1';
+            canvas.insertBefore(svg, canvas.firstChild);
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('stroke', '#999');
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('fill', 'none');
+            svg.appendChild(path);
+
+            function updateConnection() {
+                const parent = mindMap.nodes[connection.parent];
+                const child = mindMap.nodes[connection.child];
+
+                const startX = parent.x + 50;
+                const startY = parent.y + 50;
+                const endX = child.x + 50;
+                const endY = child.y + 50;
+
+                const dx = endX - startX;
+                const dy = endY - startY;
+
+                const controlX1 = startX + dx * 0.25;
+                const controlY1 = startY + dy * 0.25;
+                const controlX2 = endX - dx * 0.25;
+                const controlY2 = endY - dy * 0.25;
+
+                const d = `M ${startX} ${startY} C ${controlX1} ${controlY1}, ${controlX2} ${controlY2}, ${endX} ${endY}`;
+                path.setAttribute('d', d);
+            }
+
+            updateConnection();
+
+            mindMap.connections.push({
+                parent: connection.parent,
+                child: connection.child,
+                update: updateConnection,
+                svg: svg,
+                isVisible: true
+            });
+
+        }
+
+        function updateConnections() {
+            mindMap.connections.forEach(conn => {
+                if (conn.update && conn.isVisible) {
+                    conn.update();
+                }
+            });
+        }
+
+        function updateMindMapData(updateFn) {
+            updateFn();
+            updateConnections();
+        }
+
+        initializeSaving();
+        initializeFileLoading();
+
+    </script>
+</body>
+
+</html>
